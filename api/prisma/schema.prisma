@@ -1,0 +1,170 @@
+// Dhaka Tesla Pool — Prisma schema
+// Money is always stored as integer paisa (1 BDT = 100 paisa). Never Float/Decimal for currency.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PASSENGER
+  DRIVER
+}
+
+enum TeslaStatus {
+  OFFLINE
+  ONLINE
+}
+
+enum PoolStatus {
+  FORMING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  DRIVER_ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TESLAPAY
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+}
+
+model User {
+  id                 String        @id @default(uuid())
+  name               String
+  phone              String        @unique
+  role               Role
+  passwordHash       String        @map("password_hash")
+  walletBalancePaisa Int           @default(0) @map("wallet_balance_paisa")
+  createdAt          DateTime      @default(now()) @map("created_at")
+
+  teslas       Tesla[]
+  rideRequests RideRequest[]
+
+  @@map("users")
+}
+
+model Tesla {
+  id          String      @id @default(uuid())
+  driverId    String      @map("driver_id")
+  plateNumber String      @map("plate_number")
+  capacity    Int         @default(3)
+  status      TeslaStatus @default(OFFLINE)
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  driver User   @relation(fields: [driverId], references: [id])
+  pools  Pool[]
+
+  @@index([driverId])
+  @@map("teslas")
+}
+
+model Pool {
+  id             String     @id @default(uuid())
+  teslaId        String     @map("tesla_id")
+  status         PoolStatus @default(FORMING)
+  occupiedSeats  Int        @default(0) @map("occupied_seats")
+  startedAt      DateTime?  @map("started_at")
+  completedAt    DateTime?  @map("completed_at")
+
+  tesla        Tesla         @relation(fields: [teslaId], references: [id])
+  rideRequests RideRequest[]
+
+  @@index([teslaId, status])
+  @@map("pools")
+}
+
+model RideRequest {
+  id             String     @id @default(uuid())
+  passengerId    String     @map("passenger_id")
+  poolId         String?    @map("pool_id")
+  pickupZone     String     @map("pickup_zone")
+  dropoffZone    String     @map("dropoff_zone")
+  pickupLat      Float      @map("pickup_lat")
+  pickupLng      Float      @map("pickup_lng")
+  dropoffLat     Float      @map("dropoff_lat")
+  dropoffLng     Float      @map("dropoff_lng")
+  seatsRequested Int        @default(1) @map("seats_requested")
+  status         RideStatus @default(REQUESTED)
+  requestedAt    DateTime   @default(now()) @map("requested_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  version        Int        @default(0) // optimistic-lock column; see README concurrency notes
+
+  passenger     User            @relation(fields: [passengerId], references: [id])
+  pool          Pool?           @relation(fields: [poolId], references: [id])
+  fare          Fare?
+  payment       Payment?
+  statusHistory StatusHistory[]
+
+  @@index([status, pickupZone])
+  @@index([passengerId])
+  @@map("ride_requests")
+}
+
+model Fare {
+  id                  String   @id @default(uuid())
+  rideRequestId       String   @unique @map("ride_request_id")
+  baseFarePaisa       Int      @map("base_fare_paisa")
+  distanceChargePaisa Int      @map("distance_charge_paisa")
+  poolDiscountPaisa   Int      @default(0) @map("pool_discount_paisa")
+  totalFarePaisa      Int      @map("total_fare_paisa")
+  calculatedAt        DateTime @default(now()) @map("calculated_at")
+
+  rideRequest RideRequest @relation(fields: [rideRequestId], references: [id])
+
+  @@map("fares")
+}
+
+model StatusHistory {
+  id            String     @id @default(uuid())
+  rideRequestId String     @map("ride_request_id")
+  fromStatus    RideStatus? @map("from_status")
+  toStatus      RideStatus @map("to_status")
+  changedAt     DateTime   @default(now()) @map("changed_at")
+
+  rideRequest RideRequest @relation(fields: [rideRequestId], references: [id])
+
+  @@index([rideRequestId])
+  @@map("status_history")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  rideRequestId String        @unique @map("ride_request_id")
+  method        PaymentMethod
+  amountPaisa   Int           @map("amount_paisa")
+  status        PaymentStatus @default(PENDING)
+  paidAt        DateTime?     @map("paid_at")
+
+  rideRequest RideRequest @relation(fields: [rideRequestId], references: [id])
+
+  @@map("payments")
+}
+
+model IdempotencyKey {
+  key         String   @id
+  endpoint    String
+  requestHash String   @map("request_hash")
+  responseBody Json?   @map("response_body")
+  statusCode  Int?     @map("status_code")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("idempotency_keys")
+}

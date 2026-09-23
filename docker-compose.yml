@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: tesla_pool
+      POSTGRES_USER: tesla
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tesla_dev_password}
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tesla"]
+      interval: 5s
+      retries: 5
+
+  api:
+    build: ./api
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports: ["4000:4000"]
+    command: >
+      sh -c "npx prisma migrate deploy &&
+             npx prisma db seed &&
+             node src/main.js"
+
+volumes:
+  pgdata:
