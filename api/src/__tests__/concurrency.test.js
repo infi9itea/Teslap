@@ -14,6 +14,18 @@ const describeIfDb = hasDb ? describe : describe.skip;
 
 describeIfDb("POST /pools/:id/claim under concurrency", () => {
   let request, prisma, app;
+  const createdUserIds = [];
+  const createdTeslaIds = [];
+  const createdPoolIds = [];
+  const createdRideRequestIds = [];
+
+  // Bug found via manual Codespaces testing: this test used to reuse the
+  // same "Banani"/"Mohakhali" zone strings as the real demo/seed data and
+  // never cleaned up, so a leftover REQUESTED row from a prior test run
+  // would silently get pooled with real requests later. Using an isolated
+  // zone name (never matched by real matching logic) plus explicit cleanup
+  // fixes both problems.
+  const TEST_ZONE = `__TEST_ZONE_${Date.now()}`;
 
   beforeAll(() => {
     prisma = require("../lib/prisma");
@@ -23,34 +35,45 @@ describeIfDb("POST /pools/:id/claim under concurrency", () => {
   });
 
   afterAll(async () => {
+    await prisma.statusHistory.deleteMany({ where: { rideRequestId: { in: createdRideRequestIds } } });
+    await prisma.fare.deleteMany({ where: { rideRequestId: { in: createdRideRequestIds } } });
+    await prisma.rideRequest.deleteMany({ where: { id: { in: createdRideRequestIds } } });
+    await prisma.pool.deleteMany({ where: { id: { in: createdPoolIds } } });
+    await prisma.tesla.deleteMany({ where: { id: { in: createdTeslaIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.$disconnect();
   });
 
   it("lets exactly one of two simultaneous claims for the last seat succeed", async () => {
-    // Arrange: a Tesla with capacity 1, one seat already occupied by someone
-    // else, so Nusrat and Shirin are both racing for the single last seat.
     const driver = await prisma.user.create({
       data: { name: "Test Driver", phone: `driver-${Date.now()}`, role: "DRIVER", passwordHash: "x" },
     });
+    createdUserIds.push(driver.id);
+
     const tesla = await prisma.tesla.create({
       data: { driverId: driver.id, plateNumber: "TEST-1", capacity: 1, status: "ONLINE" },
     });
+    createdTeslaIds.push(tesla.id);
+
     const pool = await prisma.pool.create({
       data: { teslaId: tesla.id, status: "FORMING", occupiedSeats: 0 },
     });
+    createdPoolIds.push(pool.id);
 
     const [nusrat, shirin] = await Promise.all(
       ["Nusrat", "Shirin"].map((name) =>
         prisma.user.create({ data: { name, phone: `${name}-${Date.now()}-${Math.random()}`, role: "PASSENGER", passwordHash: "x" } })
       )
     );
+    createdUserIds.push(nusrat.id, shirin.id);
+
     const [reqNusrat, reqShirin] = await Promise.all(
       [nusrat, shirin].map((u) =>
         prisma.rideRequest.create({
           data: {
             passengerId: u.id,
-            pickupZone: "Banani",
-            dropoffZone: "Mohakhali",
+            pickupZone: TEST_ZONE,
+            dropoffZone: TEST_ZONE,
             pickupLat: 23.7937,
             pickupLng: 90.4066,
             dropoffLat: 23.7805,
@@ -60,11 +83,11 @@ describeIfDb("POST /pools/:id/claim under concurrency", () => {
         })
       )
     );
+    createdRideRequestIds.push(reqNusrat.id, reqShirin.id);
 
     const jwt = require("jsonwebtoken");
     const token = (userId) => jwt.sign({ sub: userId, role: "PASSENGER" }, process.env.JWT_SECRET || "test-secret");
 
-    // Act: fire both claims at (as close to) the same instant.
     const [resA, resB] = await Promise.all([
       request
         .post(`/pools/${pool.id}/claim`)
@@ -78,11 +101,10 @@ describeIfDb("POST /pools/:id/claim under concurrency", () => {
         .send({ rideRequestId: reqShirin.id }),
     ]);
 
-    // Assert: exactly one succeeded, the other got a clean 409 conflict.
     const statuses = [resA.status, resB.status].sort();
     expect(statuses).toEqual([200, 409]);
 
     const finalPool = await prisma.pool.findUnique({ where: { id: pool.id } });
-    expect(finalPool.occupiedSeats).toBe(1); // never 2 — the whole point of the test
+    expect(finalPool.occupiedSeats).toBe(1);
   });
 });
