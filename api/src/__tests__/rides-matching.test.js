@@ -7,6 +7,7 @@ describeIfDb("POST /rides — matching a solo-assigned request", () => {
   const createdTeslaIds = [];
   const createdPoolIds = [];
   const createdRideRequestIds = [];
+  let otherOnlineTeslaIds = [];
 
   const TEST_ZONE = `__TEST_ZONE_rides_${Date.now()}`;
 
@@ -14,11 +15,17 @@ describeIfDb("POST /rides — matching a solo-assigned request", () => {
   const MOHAKHALI = { lat: 23.764121548646127, lng: 90.39483713960288 };
   const GULSHAN1 = { lat: 23.7758931211846, lng: 90.38714301435537 };
 
-  beforeAll(() => {
+  beforeAll(async () => {
     prisma = require("../lib/prisma");
     jwt = require("jsonwebtoken");
     const { createApp } = require("../app");
     request = require("supertest")(createApp());
+
+    const others = await prisma.tesla.findMany({ where: { status: "ONLINE" } });
+    otherOnlineTeslaIds = others.map((t) => t.id);
+    if (otherOnlineTeslaIds.length > 0) {
+      await prisma.tesla.updateMany({ where: { id: { in: otherOnlineTeslaIds } }, data: { status: "OFFLINE" } });
+    }
   });
 
   afterAll(async () => {
@@ -28,6 +35,10 @@ describeIfDb("POST /rides — matching a solo-assigned request", () => {
     await prisma.pool.deleteMany({ where: { id: { in: createdPoolIds } } });
     await prisma.tesla.deleteMany({ where: { id: { in: createdTeslaIds } } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+
+    if (otherOnlineTeslaIds.length > 0) {
+      await prisma.tesla.updateMany({ where: { id: { in: otherOnlineTeslaIds } }, data: { status: "ONLINE" } });
+    }
     await prisma.$disconnect();
   });
 
