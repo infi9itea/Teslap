@@ -4,15 +4,16 @@ const { requireAuth } = require("../middleware/auth");
 const { isPoolable, detourRatios, haversineKm } = require("../lib/geo");
 const { soloFarePaisa, splitPooledFare } = require("../lib/fare");
 const { applyTransition } = require("../lib/lifecycle");
+const { asyncHandler } = require("../lib/asyncHandler");
 
 const router = express.Router();
 
 // Finds an available (ONLINE) Tesla and its current FORMING pool, creating
-// one if needed. Assignment here only sets ride_requests.pool_id — it does
+// one if needed. Assignment here only sets ride_requests.pool_id, it does
 // NOT reserve a seat or touch pools.occupied_seats. Reserving a seat is
 // exclusively POST /pools/:id/claim's job (Section 7's SELECT ... FOR UPDATE
 // path), so multiple ride requests can be assigned to the same pool while
-// only `capacity` of them will actually succeed at claim time — that's by
+// only `capacity` of them will actually succeed at claim time, that's by
 // design, not a bug.
 async function findOrCreateFormingPool(tx) {
   const tesla = await tx.tesla.findFirst({ where: { status: "ONLINE" } });
@@ -29,12 +30,12 @@ async function findOrCreateFormingPool(tx) {
   return pool;
 }
 
-// POST /rides — create a ride request, then look for an existing REQUESTED
+// POST /rides, create a ride request, then look for an existing REQUESTED
 // request it can pool with (Section 5's detour-ratio rule), and assign the
 // resulting request(s) to a FORMING pool on an available Tesla. This does
-// NOT reserve a seat — claiming happens separately via POST /pools/:id/claim
+// NOT reserve a seat, claiming happens separately via POST /pools/:id/claim
 // so the concurrency-sensitive step stays isolated to one endpoint (Section 7).
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", requireAuth, asyncHandler(async (req, res) => {
   const { pickupZone, dropoffZone, pickupLat, pickupLng, dropoffLat, dropoffLng, seatsRequested } = req.body;
 
   if ([pickupLat, pickupLng, dropoffLat, dropoffLng].some((v) => typeof v !== "number")) {
@@ -58,6 +59,16 @@ router.post("/", requireAuth, async (req, res) => {
     data: { rideRequestId: rideRequest.id, fromStatus: null, toStatus: "REQUESTED" },
   });
 
+  // Look for a poolable candidate: another REQUESTED request sharing this
+  // pickup zone whose detour ratio clears the threshold. Deliberately NOT
+  // filtered by poolId here, a request can already be tentatively assigned
+  // to a FORMING pool (as a solo rider) without having claimed a seat yet,
+  // and should still be eligible to match. (This used to filter poolId:
+  // null, which caused a real bug: once solo requests got assigned a pool,
+  // they became invisible to this query and later-arriving requests that
+  // should have matched with them were silently treated as solo instead,
+  // caught via manual Codespaces testing, not by the unit tests, since the
+  // unit tests exercise geo.js/fare.js directly rather than this route.)
   const candidates = await prisma.rideRequest.findMany({
     where: {
       status: "REQUESTED",
@@ -78,6 +89,7 @@ router.post("/", requireAuth, async (req, res) => {
   );
 
   if (!match) {
+    // No pool partner yet, solo fare stands until/unless a later request pools with this one.
     const directKm = haversineKm(self.pickup, self.dropoff);
     const solo = soloFarePaisa(directKm);
 
@@ -106,10 +118,13 @@ router.post("/", requireAuth, async (req, res) => {
       rideRequest: { ...rideRequest, poolId: pool.id },
       pooledWith: null,
       poolId: pool.id,
-      note: "No pool partner yet — solo fare applies. Call POST /pools/:poolId/claim to reserve your seat.",
+      note: "No pool partner yet, solo fare applies. Call POST /pools/:poolId/claim to reserve your seat.",
     });
   }
 
+  // Found a match: compute both fares via the savings split (Section 6),
+  // then create a FORMING pool sized for this Tesla-agnostic step, actual
+  // seat capacity is enforced at claim time (Section 7), not here.
   const other = { id: match.id, pickup: { lat: match.pickupLat, lng: match.pickupLng }, dropoff: { lat: match.dropoffLat, lng: match.dropoffLng } };
   const { route, directA, directB } = detourRatios(self, other);
   const soloBackToBack = directA + directB;
@@ -158,9 +173,10 @@ router.post("/", requireAuth, async (req, res) => {
     poolId: pool.id,
     note: "Fares computed as a poolable pair. Call POST /pools/:poolId/claim to actually reserve your seat.",
   });
-});
+}));
 
-router.post("/:id/cancel", requireAuth, async (req, res) => {
+// POST /rides/:id/cancel, only valid before STARTED (Section 4).
+router.post("/:id/cancel", requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -174,12 +190,12 @@ router.post("/:id/cancel", requireAuth, async (req, res) => {
     return res.status(200).json({ status: "CANCELLED" });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
-    return res.status(500).json({ error: "Internal error" });
+    throw err; // let asyncHandler/central error middleware handle anything unexpected
   }
-});
+}));
 
-router.get("/:id", requireAuth, async (req, res) => {
+// GET /rides/:id, a passenger can only see their own ride.
+router.get("/:id", requireAuth, asyncHandler(async (req, res) => {
   const rideRequest = await prisma.rideRequest.findUnique({
     where: { id: req.params.id },
     include: { fare: true },
@@ -189,6 +205,6 @@ router.get("/:id", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Not your ride request" });
   }
   return res.json({ rideRequest });
-});
+}));
 
 module.exports = router;

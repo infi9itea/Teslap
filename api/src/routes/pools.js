@@ -2,6 +2,7 @@ const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth } = require("../middleware/auth");
 const { idempotent } = require("../middleware/idempotency");
+const { asyncHandler } = require("../lib/asyncHandler");
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const router = express.Router();
 // The endpoint the whole concurrency design (Section 7 of the build plan)
 // is built around: two passengers (e.g. Nusrat and Shirin) racing for the
 // last seat on the same Tesla must never both succeed.
-router.post("/:poolId/claim", requireAuth, idempotent(), async (req, res) => {
+router.post("/:poolId/claim", requireAuth, idempotent(), asyncHandler(async (req, res) => {
   const { poolId } = req.params;
   const { rideRequestId } = req.body;
 
@@ -22,7 +23,7 @@ router.post("/:poolId/claim", requireAuth, idempotent(), async (req, res) => {
       // Fail fast instead of hanging the passenger's tap if the lock is contended.
       await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '2s'`);
 
-      // Lock the pool row (guaranteed to exist once the Tesla is online) — see
+      // Lock the pool row (guaranteed to exist once the Tesla is online), see
       // the plan for why we lock this row rather than a not-yet-created
       // pool-membership row.
       const [pool] = await tx.$queryRaw`
@@ -56,7 +57,7 @@ router.post("/:poolId/claim", requireAuth, idempotent(), async (req, res) => {
       });
 
       if (updated.count === 0) {
-        // Someone else already matched/cancelled this specific ride request —
+        // Someone else already matched/cancelled this specific ride request,
         // roll back the seat increment by throwing (transaction aborts).
         const err = new Error("Ride request is no longer claimable");
         err.status = 409;
@@ -73,15 +74,14 @@ router.post("/:poolId/claim", requireAuth, idempotent(), async (req, res) => {
     return res.status(200).json({ rideRequest: result });
   } catch (err) {
     if (err.code === "55P03") {
-      // Postgres lock_not_available — someone else held the row past lock_timeout.
+      // Postgres lock_not_available, someone else held the row past lock_timeout.
       return res.status(409).json({ error: "Seat claim is contended, try again" });
     }
     if (err.status) {
       return res.status(err.status).json({ error: err.message });
     }
-    console.error(err);
-    return res.status(500).json({ error: "Internal error" });
+    throw err; // let asyncHandler/central error middleware handle anything unexpected
   }
-});
+}));
 
 module.exports = router;

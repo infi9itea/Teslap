@@ -176,18 +176,41 @@ runs all 17.
   match and fare, but reserving the actual seat currently has to be done
   via `curl` (see step 4 above). Wiring a "Confirm seat" button into the
   passenger page is the natural next piece of UI work.
-- **Pools don't auto-complete.** Once every ride request in a pool reaches
-  `COMPLETED`, the `pools.status` field stays `FORMING` rather than being
-  updated. Cosmetic for the demo, but worth fixing before this goes
-  further.
-- **`POST /pools/:id/claim`'s idempotency check isn't being enforced as
-  strictly as intended.** A request without an `Idempotency-Key` header was
-  observed succeeding during manual testing when it should require one per
-  `api/src/middleware/idempotency.js`. Flagged for follow-up, not yet
-  root-caused.
 - Per the plan's lean-MVP scope, the bonus scaling items (Section 13)
   remain deliberately design-only. They're the "what changes at scale"
   answer, not part of the MVP.
+
+## Two more things found and fixed after the above was written
+
+- **Pools now auto-complete.** Once every ride request in a pool reaches a
+  terminal state (`COMPLETED` or `CANCELLED`), `api/src/routes/driver.js`
+  now marks the pool itself `COMPLETED` too, instead of leaving
+  `pools.status` stuck on `FORMING` forever.
+- **A crash-on-error bug, more serious than it first looked.** Several route
+  handlers (`/auth/login` among them) had no `try/catch` around their Prisma
+  calls. In Express 4, an unhandled rejection from an async route handler
+  doesn't just fail that one request, it can crash the entire Node process.
+  This was found while trying to reproduce a suspected idempotency bug: the
+  database had gone down, and the very next request to hit an unguarded
+  route took the whole server down with it, which is almost certainly the
+  real explanation for several "mysterious" outages earlier in development
+  that looked like Codespace resets but may partly have been this. Fixed
+  with a small `asyncHandler` wrapper (`api/src/lib/asyncHandler.js`)
+  applied to every route across `auth.js`, `rides.js`, `pools.js`,
+  `driver.js`, and the idempotency middleware, so any thrown or rejected
+  error now reaches Express's centralized error handler and returns a
+  clean 500 instead of ending the process.
+- **The suspected idempotency bug did not reproduce.** After the crash-proofing
+  fix above and a full clean restart of the database, API, and frontend, the
+  exact scenario that originally looked broken (a claim request missing its
+  `Idempotency-Key` header appearing to succeed) was retested directly with
+  `curl -i` and correctly returned `400 Bad Request, "Idempotency-Key header
+  is required"`. The likely explanation: the original test was run against a
+  stale or restarted server process during a long, environment-flaky
+  session, not against a genuine logic bug in
+  `api/src/middleware/idempotency.js`. Recorded here rather than quietly
+  dropped, since "we looked again and it wasn't actually broken" is a valid
+  and honest outcome, not a gap.
 
 ## AI usage
 

@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const prisma = require("../lib/prisma");
+const { asyncHandler } = require("../lib/asyncHandler");
 
 // Standard idempotency-key pattern (as used by Stripe et al.): client sends a
 // unique key on a mutating request; a retried request with the same key
@@ -7,7 +8,7 @@ const prisma = require("../lib/prisma");
 // Section 7 of the build plan for why this matters specifically on the
 // seat-claim endpoint.
 function idempotent() {
-  return async (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     const key = req.headers["idempotency-key"];
     if (!key) {
       return res.status(400).json({ error: "Idempotency-Key header is required" });
@@ -44,7 +45,7 @@ function idempotent() {
     };
 
     next();
-  };
+  });
 }
 
 module.exports = { idempotent };
