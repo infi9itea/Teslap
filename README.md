@@ -86,6 +86,11 @@ and fixing two real bugs that no unit test caught:
   `MATCHED -> DRIVER_ARRIVED -> STARTED -> COMPLETED` via the driver
   manifest UI, with each ride's state transitioning independently and
   correctly.
+- **Docker deployment**: from a wiped database volume, a single
+  `docker compose up --build` brought up the database, API, and frontend,
+  applied the migration and the capacity trigger, seeded the demo data, and
+  passed the API healthcheck, all without manual steps. Verified in GitHub
+  Codespaces.
 
 ### Two real bugs found through manual testing (and fixed)
 
@@ -118,6 +123,46 @@ normally, migrations applying, and every test (including the Prisma-native
 concurrency and regression tests) passing against live Postgres.
 
 ## Running it
+
+### With Docker (recommended, one command)
+
+```bash
+docker compose up --build
+```
+
+That's the whole setup. Compose starts three containers: Postgres, the API,
+and the frontend. The API container waits for the database, applies the
+migration, applies the DB-level capacity trigger, seeds the demo data
+(Jashim, Nusrat, Rafiq, Shirin, and the Bullet Tesla), and only then starts
+serving. Nothing has to be run by hand.
+
+- Frontend: http://localhost:3000
+- API: http://localhost:4000 (health check at `/health`)
+- Demo logins: see "Demo walkthrough" below (password `password123`)
+- Reset everything to a clean state: `docker compose down -v`
+
+Defaults work with zero configuration. To override them, copy
+`.env.example` to `.env` and edit `DB_PASSWORD`, `JWT_SECRET`, and so on.
+Compose reads that root `.env` automatically.
+
+Two Docker notes worth knowing:
+
+- **How the API reaches Postgres.** By default the API connects through
+  `host.docker.internal` (the host's published port 5432). This is the
+  route verified to work in GitHub Codespaces, on Docker Desktop, and on
+  regular Linux Docker. In Codespaces, direct container-to-container
+  traffic by service name (`db`) did not work, so the host route is the
+  default. On a normal Docker machine you can set `DB_HOST=db` in `.env`
+  to use Compose's internal network instead (standard behaviour, but not
+  something that could be verified in Codespaces).
+- **Frontend API URL.** Next.js bakes `NEXT_PUBLIC_API_BASE` into the
+  bundle at build time, and it is the URL the browser calls. It defaults to
+  `http://localhost:4000`, which is right when Docker runs on your own
+  machine. In Codespaces the browser needs the forwarded URL instead: set
+  `NEXT_PUBLIC_API_BASE` in `.env` to the forwarded address of port 4000
+  (and make that port Public), then run `docker compose up --build` again.
+
+### Without Docker (local development)
 
 **Backend:**
 ```bash
@@ -211,6 +256,26 @@ runs all 17.
   `api/src/middleware/idempotency.js`. Recorded here rather than quietly
   dropped, since "we looked again and it wasn't actually broken" is a valid
   and honest outcome, not a gap.
+- **The Docker setup was never actually tested until late, and it had
+  real bugs.** Up to that point only the database container had ever been
+  started with Docker; the API and frontend always ran directly on the
+  host. Running `docker compose up` for the first time from a clean state
+  exposed three problems, each fixed and re-verified:
+  1. `node:20-slim` ships without OpenSSL, so Prisma failed to pick the
+     right engine and `prisma migrate deploy` died with "Schema engine
+     error". Fixed by installing OpenSSL in `api/Dockerfile`.
+  2. The capacity trigger was only ever applied by hand with `psql`. Fixed
+     with `api/scripts/apply-trigger.js`, run automatically at startup.
+  3. The API could not reach Postgres from inside its container. The
+     database's own healthcheck also passed too early, because the official
+     Postgres image briefly runs a temporary socket-only server during first
+     start. Fixed by making the healthcheck use TCP, adding
+     `api/scripts/wait-for-db.js` (with a connection timeout so a network
+     hang becomes a visible retry), and routing the API's connection
+     through `host.docker.internal`. Debugging this took several rounds,
+     including one where a fix appeared not to work because an updated
+     compose file had not actually been applied, a reminder to verify the
+     file on disk before theorizing about the network.
 
 ## AI usage
 

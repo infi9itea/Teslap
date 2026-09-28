@@ -8,21 +8,58 @@ services:
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tesla"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tesla -d tesla_pool"]
       interval: 5s
-      retries: 5
+      timeout: 5s
+      retries: 10
 
   api:
     build: ./api
-    env_file: .env
+    # host.docker.internal lets the API reach Postgres through the host's
+    # published port 5432. This works on Docker Desktop, regular Linux
+    # Docker, and GitHub Codespaces. (Direct container-to-container traffic
+    # over the default bridge network was found to be blocked in Codespaces,
+    # so DB_HOST defaults to the host route. On a normal Docker machine you
+    # can set DB_HOST=db in .env to use the internal network instead.)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DATABASE_URL: postgresql://tesla:${DB_PASSWORD:-tesla_dev_password}@${DB_HOST:-host.docker.internal}:5432/tesla_pool
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-for-real-deployments}
+      PORT: 4000
     depends_on:
       db:
         condition: service_healthy
     ports: ["4000:4000"]
+    # Waits for the DB, runs migrations, applies the capacity trigger, seeds
+    # demo data (Jashim/Nusrat/Rafiq/Shirin), then starts the server. Every
+    # step is safe to re-run, so restarting this container is harmless.
     command: >
-      sh -c "npx prisma migrate deploy &&
+      sh -c "node scripts/wait-for-db.js &&
+             npx prisma migrate deploy &&
+             npm run apply-trigger &&
              npx prisma db seed &&
              node src/main.js"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get({host:'localhost',port:4000,path:'/health'}, r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./web
+      args:
+        # Next.js bakes NEXT_PUBLIC_* values into the bundle at BUILD time,
+        # and this URL is what the BROWSER calls. Locally that is
+        # http://localhost:4000. In Codespaces, set NEXT_PUBLIC_API_BASE in
+        # .env to the forwarded URL of port 4000, then rebuild.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:4000}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["3000:3000"]
 
 volumes:
   pgdata:
