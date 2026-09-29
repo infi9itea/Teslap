@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, getSession, Session, errorMessage } from "@/lib/api";
@@ -16,6 +16,7 @@ const AREAS: Record<string, { lat: number; lng: number }> = {
 type RideResult = {
   rideRequest: { id: string; status: string };
   pooledWith: string | null;
+  poolId: string | null;
   note?: string;
 };
 
@@ -38,6 +39,10 @@ export default function PassengerPage() {
   const [detail, setDetail] = useState<RideDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  // One Idempotency-Key per ride request, reused on every retry, so a
+  // double-click or a retry after a network blip can't claim twice.
+  const claimKey = useRef<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -56,6 +61,7 @@ export default function PassengerPage() {
     setError(null);
     setLoading(true);
     setDetail(null);
+    claimKey.current = null;
     try {
       const p = AREAS[pickup];
       const d = AREAS[dropoff];
@@ -83,6 +89,21 @@ export default function PassengerPage() {
       setDetail(res);
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function claimSeat() {
+    if (!result?.poolId) return;
+    setError(null);
+    setClaiming(true);
+    try {
+      if (!claimKey.current) claimKey.current = crypto.randomUUID();
+      await api.claimSeat(result.poolId, result.rideRequest.id, claimKey.current);
+      await refreshDetail();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setClaiming(false);
     }
   }
 
@@ -164,6 +185,15 @@ export default function PassengerPage() {
             </p>
 
             <div className="mt-4 flex gap-2">
+              {result.poolId && (!detail || detail.rideRequest.status === "REQUESTED") && (
+                <button
+                  onClick={claimSeat}
+                  disabled={claiming}
+                  className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  {claiming ? "Confirming..." : "Confirm seat"}
+                </button>
+              )}
               <button
                 onClick={refreshDetail}
                 className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
