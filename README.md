@@ -178,6 +178,22 @@ Two Docker specifics worth knowing:
   (with that port set to Public), then run `docker compose up --build`
   again.
 
+### Troubleshooting
+
+- **API stuck on "Waiting for database" (`ENETUNREACH` or timeouts).**
+  Usually leftover network state from an earlier run. Run
+  `docker compose down`, then `docker compose up --build` again.
+- **"address already in use" on port 3000 or 4000.** Another process, often
+  a local `npm run dev`, is holding the port. `ss -ltnp | grep -E ':(3000|4000)'`
+  shows what, and stopping it frees the port.
+- **"Failed to fetch" on login in GitHub Codespaces.** The browser can't
+  reach `localhost:4000` from inside a Codespace. Add
+  `NEXT_PUBLIC_API_BASE=https://<codespace-name>-4000.app.github.dev` to
+  `.env`, make ports 3000 and 4000 public in the Ports tab, then run
+  `docker compose build --no-cache web && docker compose up -d`. The address
+  is baked in at build time, so a rebuild is required. On your own machine
+  the default `http://localhost:4000` is correct and none of this is needed.
+
 ### Without Docker (local development)
 
 **Backend:**
