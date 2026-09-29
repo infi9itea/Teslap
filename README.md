@@ -224,7 +224,7 @@ cd api && npm test
 
 The DB-dependent tests auto-detect `DATABASE_URL` from `.env` via Jest's
 `setupFiles` config, no need to pass it manually. With the database running
-and migrated, `npm test` runs all 30.
+and migrated, `npm test` runs every suite.
 
 ## API overview
 
