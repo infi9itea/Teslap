@@ -11,6 +11,11 @@ type RideRow = {
   fare: { totalFarePaisa: number } | null;
 };
 
+type TeslaInfo = {
+  tesla: { id: string; plateNumber: string; capacity: number; status: "ONLINE" | "OFFLINE" };
+  currentPool: { id: string; status: string; occupiedSeats: number } | null;
+};
+
 type Manifest = {
   pool: {
     id: string;
@@ -34,6 +39,7 @@ export default function DriverPage() {
   const [session, setSessionState] = useState<Session | null>(null);
   const [poolId, setPoolId] = useState("");
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [teslaInfo, setTeslaInfo] = useState<TeslaInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -48,6 +54,19 @@ export default function DriverPage() {
     // see the equivalent comment in app/page.tsx.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSessionState(s);
+
+    // Look up this driver's Tesla and, if it has a live pool, load its
+    // manifest straight away so the driver doesn't need to paste a pool ID.
+    api
+      .driverTesla()
+      .then((info: TeslaInfo) => {
+        setTeslaInfo(info);
+        if (info.currentPool) {
+          setPoolId(info.currentPool.id);
+          return api.driverManifest(info.currentPool.id).then(setManifest);
+        }
+      })
+      .catch((err) => setError(errorMessage(err)));
   }, [router]);
 
   async function loadManifest() {
@@ -61,6 +80,18 @@ export default function DriverPage() {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function toggleStatus() {
+    if (!teslaInfo) return;
+    setError(null);
+    try {
+      const next = teslaInfo.tesla.status === "ONLINE" ? "OFFLINE" : "ONLINE";
+      const res = await api.driverSetStatus(next);
+      setTeslaInfo({ ...teslaInfo, tesla: res.tesla });
+    } catch (err) {
+      setError(errorMessage(err));
     }
   }
 
@@ -83,6 +114,26 @@ export default function DriverPage() {
         <h1 className="text-xl font-semibold text-zinc-900">Driver manifest</h1>
         <p className="text-sm text-zinc-500">Signed in as {session.user.name}</p>
 
+        {teslaInfo && (
+          <div className="mt-6 flex items-center justify-between rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div>
+              <p className="text-sm font-semibold text-zinc-900">{teslaInfo.tesla.plateNumber}</p>
+              <p className="text-xs text-zinc-500">
+                {teslaInfo.tesla.capacity} seats ·{" "}
+                <span className={teslaInfo.tesla.status === "ONLINE" ? "text-green-700" : "text-zinc-500"}>
+                  {teslaInfo.tesla.status}
+                </span>
+              </p>
+            </div>
+            <button
+              onClick={toggleStatus}
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              {teslaInfo.tesla.status === "ONLINE" ? "Go offline" : "Go online"}
+            </button>
+          </div>
+        )}
+
         <div className="mt-6 flex gap-2">
           <input
             value={poolId}
@@ -91,7 +142,7 @@ export default function DriverPage() {
             className="flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm"
           />
           <button
-            onClick={loadManifest}
+            onClick={() => loadManifest()}
             disabled={loading}
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
           >
