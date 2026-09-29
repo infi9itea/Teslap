@@ -194,6 +194,21 @@ router.post("/:id/cancel", requireAuth, asyncHandler(async (req, res) => {
   }
 }));
 
+// GET /rides, the calling passenger's own ride history, newest first.
+// Scoped by passengerId from the JWT, never from a query param, so one
+// passenger can't list another's rides. Capped so a long history can't
+// turn into an unbounded response.
+router.get("/", requireAuth, asyncHandler(async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+  const rideRequests = await prisma.rideRequest.findMany({
+    where: { passengerId: req.user.id },
+    include: { fare: true },
+    orderBy: { requestedAt: "desc" },
+    take: limit,
+  });
+  return res.json({ rideRequests });
+}));
+
 // GET /rides/:id, a passenger can only see their own ride.
 router.get("/:id", requireAuth, asyncHandler(async (req, res) => {
   const rideRequest = await prisma.rideRequest.findUnique({
