@@ -70,6 +70,11 @@ export const api = {
       body: JSON.stringify({ rideRequestId }),
     }),
 
+  driverTesla: () => request("/driver/tesla"),
+
+  driverSetStatus: (status: "ONLINE" | "OFFLINE") =>
+    request("/driver/tesla/status", { method: "PATCH", body: JSON.stringify({ status }) }),
+
   driverManifest: (poolId: string) => request(`/driver/pools/${poolId}`),
 
   driverArrive: (rideId: string) => request(`/driver/rides/${rideId}/arrive`, { method: "POST" }),
