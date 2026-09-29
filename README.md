@@ -107,11 +107,11 @@ Full justification and alternatives considered are in
 │       ├── middleware/                # auth.js, idempotency.js
 │       ├── routes/                    # auth.js, rides.js, pools.js, driver.js
 │       ├── test-utils/fixtures.js     # shared test data helpers
-│       └── __tests__/                 # 7 test files, 30 tests total
+│       └── __tests__/                 # 10 test files
 └── web/
     ├── Dockerfile
     ├── lib/api.ts              # typed API client
-    └── app/                    # login, register, passenger, driver pages
+    └── app/                    # login, register, passenger (+ history), driver pages
 ```
 
 ## Prerequisites
@@ -220,13 +220,17 @@ All routes are JSON over REST. Authenticated routes expect
 | `POST /auth/register` | none | Create a passenger or driver account |
 | `POST /auth/login` | none | Get a JWT |
 | `POST /rides` | passenger | Create a ride request; matches it against existing requests (Section 5's detour-ratio rule) and assigns a pool |
-| `GET /rides/:id` | passenger, own ride only | Ride status and fare |
+| `GET /rides` | passenger | Own ride history, newest first (`?limit=`, max 100) |
+| `GET /rides/:id` | passenger, own ride only | Ride status, fare and payment |
 | `POST /rides/:id/cancel` | passenger, own ride only | Cancel before `STARTED` |
 | `POST /pools/:poolId/claim` | passenger, own ride only, requires `Idempotency-Key` header | Reserve an actual seat; the concurrency-critical endpoint |
-| `GET /driver/pools/:poolId` | driver, own Tesla only | Manifest: every passenger in the pool with their fare and status |
+| `GET /driver/tesla` | driver | The driver's Tesla and its current pool, so the driver page needs no pasted ID |
+| `PATCH /driver/tesla/status` | driver | Go `ONLINE` or `OFFLINE`; refused while passengers hold seats |
+| `GET /driver/pools/:poolId` | driver, own Tesla only | Manifest: every passenger in the pool with their fare, status and payment |
 | `POST /driver/rides/:id/arrive` | driver, own Tesla only | `MATCHED → DRIVER_ARRIVED` |
 | `POST /driver/rides/:id/start` | driver, own Tesla only | `DRIVER_ARRIVED → STARTED` |
 | `POST /driver/rides/:id/complete` | driver, own Tesla only | `STARTED → COMPLETED`; auto-completes the pool if this was its last active ride |
+| `POST /driver/rides/:id/collect-cash` | driver, own Tesla only | Record cash payment for a `COMPLETED` ride; amount is the stored fare, repeat calls are idempotent |
 | `GET /health` | none | Liveness check, used by Docker's healthcheck |
 
 ## Demo walkthrough (matches the plan's worked example)
@@ -237,16 +241,17 @@ All routes are JSON over REST. Authenticated routes expect
 2. Log in as Nusrat, request Banani to Mohakhali.
 3. Log in as Rafiq, request Banani to Gulshan 1. Should show "Pooled with
    another passenger", fare 45.38 BDT.
-4. Each passenger needs to claim their seat via `POST /pools/:poolId/claim`
-   with an `Idempotency-Key` header (get the pool ID from the ride response
-   or the `pools` table). **This step isn't wired into the passenger UI
-   yet**, see [Known limitations](#known-limitations).
-5. Log in as Jashim, go to `/driver`, paste the pool ID, load the manifest,
-   and step each passenger through arrive, start, and complete.
+4. Each passenger clicks **Confirm seat** on their result card, then
+   **Refresh status & fare**. Status moves to `MATCHED`. (This calls
+   `POST /pools/:poolId/claim` with an `Idempotency-Key`.)
+5. Log in as Jashim, go to `/driver`. Click **Go online** if Bullet is
+   offline. Bullet's current pool loads automatically. Step each passenger
+   through arrive, start, and complete, then click **Collect cash** for each.
+6. Passengers can see past rides under **Ride history** on `/passenger`.
 
 ## Testing
 
-30 tests across 7 files, covering exactly what the brief asks for:
+10 test files, covering exactly what the brief asks for plus the driver and payment flows:
 
 | Requirement (from the brief) | Test file |
 |---|---|
@@ -257,6 +262,9 @@ All routes are JSON over REST. Authenticated routes expect
 | Cancellation rules hold | `access-control.test.js` |
 | Two concurrent requests can't corrupt pool capacity | `concurrency.test.js`, `pool-capacity.test.js` |
 | (matching logic itself) | `geo.test.js` |
+| Passengers only see their own ride history | `ride-history.test.js` |
+| Driver online/offline and the offline guard | `driver-status.test.js` |
+| Cash payment rules and idempotency | `cash-payment.test.js` |
 
 Unit tests (`fare.js`, `geo.js`, `lifecycle.js`) need no database and always
 run. Integration tests use real HTTP requests (via Supertest) against a real
@@ -357,33 +365,28 @@ Full reasoning for every decision is in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Known limitations
 
-- **Passenger UI doesn't call the claim endpoint.** `/passenger` shows the
-  match and fare, but reserving the actual seat currently requires a direct
-  API call (see the demo walkthrough). Wiring a "Confirm seat" button into
-  the passenger page is the clearest next piece of UI work.
 - **Only 3 of the 8 named Dhaka areas** (Banani, Mohakhali, Gulshan 1) have
   real coordinates wired up, since those are the ones the worked example in
   the brief specifically uses. The matching and fare logic itself is
   general, adding the remaining 5 areas is a data change, not a code
   change.
-- **Payment is schema-only.** The `payments` table and `Payment` model
-  exist, but no endpoint creates or updates a payment record yet, the
-  "mark as paid" step isn't implemented.
+- **Cash only.** Drivers record cash payment after completion. The
+  `TESLAPAY` enum value exists in the schema, but no simulated wallet flow
+  is implemented.
+- **Assignment is automatic.** A driver doesn't browse and accept
+  requests. Riders are assigned to the first `ONLINE` Tesla's forming pool,
+  and the driver works from that manifest. Assumption: one Tesla per driver.
 - **No public deployment.** See [Deployment](#deployment) below for why,
   and what's provided instead.
 
 ## Next improvements
 
 In priority order, if this continued past the assessment:
-1. Wire the claim button into the passenger UI (closes the biggest gap
-   between what the API can do and what a user can actually do without a
-   terminal).
-2. Implement the payment step (cash or a simulated "TeslaPay" flag) so a
-   ride can be marked paid.
-3. Add the remaining 5 Dhaka areas with real coordinates.
-4. Driver online/offline toggle and a "browse nearby requests" view, so a
-   driver doesn't need a pool ID pasted in by hand.
-5. The scaling items in `docs/DESIGN.md` (Section 13): geospatial indexing,
+1. Simulated TeslaPay wallet payments alongside cash.
+2. Add the remaining 5 Dhaka areas with real coordinates.
+3. A driver "browse and accept requests" step instead of automatic
+   assignment, plus multiple Teslas per driver.
+4. The scaling items in `docs/DESIGN.md` (Section 13): geospatial indexing,
    read replicas, a distributed lock for seat-claiming at high write volume,
    and the observability/retry strategy work needed before this could
    actually handle 1M passengers.
