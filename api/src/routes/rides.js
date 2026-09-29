@@ -213,7 +213,7 @@ router.get("/", requireAuth, asyncHandler(async (req, res) => {
 router.get("/:id", requireAuth, asyncHandler(async (req, res) => {
   const rideRequest = await prisma.rideRequest.findUnique({
     where: { id: req.params.id },
-    include: { fare: true },
+    include: { fare: true, payment: true },
   });
   if (!rideRequest) return res.status(404).json({ error: "Not found" });
   if (rideRequest.passengerId !== req.user.id) {

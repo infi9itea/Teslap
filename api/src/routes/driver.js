@@ -63,7 +63,7 @@ router.get("/pools/:poolId", requireAuth, requireRole("DRIVER"), asyncHandler(as
     where: { id: req.params.poolId },
     include: {
       tesla: true,
-      rideRequests: { include: { fare: true, passenger: { select: { id: true, name: true, phone: true } } } },
+      rideRequests: { include: { fare: true, payment: true, passenger: { select: { id: true, name: true, phone: true } } } },
     },
   });
   if (!pool) return res.status(404).json({ error: "Not found" });
@@ -108,6 +108,50 @@ function transitionHandler(from, to) {
     }
   });
 }
+
+// POST /driver/rides/:id/collect-cash, the driver records that this
+// passenger paid their fare in cash. Only valid once the ride is COMPLETED,
+// and only for a ride on the driver's own Tesla. The amount is always the
+// stored fare total in paisa, never client-supplied. payments.ride_request_id
+// is UNIQUE, so a double tap can't record two payments: repeat calls return
+// the existing payment.
+router.post("/rides/:id/collect-cash", requireAuth, requireRole("DRIVER"), asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const ride = await prisma.rideRequest.findUnique({
+    where: { id },
+    include: { fare: true, payment: true, pool: { include: { tesla: true } } },
+  });
+  if (!ride) return res.status(404).json({ error: "Not found" });
+  if (ride.pool?.tesla?.driverId !== req.user.id) {
+    return res.status(403).json({ error: "Not your Tesla" });
+  }
+  if (ride.payment) return res.status(200).json({ payment: ride.payment });
+  if (ride.status !== "COMPLETED") {
+    return res.status(409).json({ error: "Cash can only be collected after the ride is completed" });
+  }
+  if (!ride.fare) return res.status(409).json({ error: "Ride has no fare to collect" });
+
+  try {
+    const payment = await prisma.payment.create({
+      data: {
+        rideRequestId: id,
+        method: "CASH",
+        amountPaisa: ride.fare.totalFarePaisa,
+        status: "PAID",
+        paidAt: new Date(),
+      },
+    });
+    return res.status(201).json({ payment });
+  } catch (err) {
+    if (err.code === "P2002") {
+      // Lost a race with a concurrent tap: return the payment that won.
+      const existing = await prisma.payment.findUnique({ where: { rideRequestId: id } });
+      return res.status(200).json({ payment: existing });
+    }
+    throw err;
+  }
+}));
 
 router.post("/rides/:id/arrive", requireAuth, requireRole("DRIVER"), transitionHandler("MATCHED", "DRIVER_ARRIVED"));
 router.post("/rides/:id/start", requireAuth, requireRole("DRIVER"), transitionHandler("DRIVER_ARRIVED", "STARTED"));
