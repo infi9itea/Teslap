@@ -80,4 +80,5 @@ export const api = {
   driverArrive: (rideId: string) => request(`/driver/rides/${rideId}/arrive`, { method: "POST" }),
   driverStart: (rideId: string) => request(`/driver/rides/${rideId}/start`, { method: "POST" }),
   driverComplete: (rideId: string) => request(`/driver/rides/${rideId}/complete`, { method: "POST" }),
+  driverCollectCash: (rideId: string) => request(`/driver/rides/${rideId}/collect-cash`, { method: "POST" }),
 };

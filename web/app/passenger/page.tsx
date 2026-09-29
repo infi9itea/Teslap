@@ -28,6 +28,7 @@ type RideDetail = {
     dropoffZone: string;
     poolId: string | null;
     fare: { totalFarePaisa: number; poolDiscountPaisa: number; baseFarePaisa: number; distanceChargePaisa: number } | null;
+    payment: { method: string; status: string } | null;
   };
 };
 
@@ -225,6 +226,11 @@ export default function PassengerPage() {
                       Total: {(detail.rideRequest.fare.totalFarePaisa / 100).toFixed(2)} BDT
                     </p>
                   </div>
+                )}
+                {detail.rideRequest.payment && (
+                  <p className="mt-2 text-zinc-600">
+                    Payment: {detail.rideRequest.payment.status} ({detail.rideRequest.payment.method.toLowerCase()})
+                  </p>
                 )}
               </div>
             )}
