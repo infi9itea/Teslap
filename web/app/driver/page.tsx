@@ -9,6 +9,7 @@ type RideRow = {
   status: string;
   passenger: { name: string; phone: string };
   fare: { totalFarePaisa: number } | null;
+  payment: { method: string; status: string } | null;
 };
 
 type TeslaInfo = {
@@ -173,8 +174,17 @@ export default function DriverPage() {
                       <p className="text-xs text-zinc-500">
                         {ride.status}
                         {ride.fare ? ` · ${(ride.fare.totalFarePaisa / 100).toFixed(2)} BDT` : ""}
+                        {ride.payment ? ` · ${ride.payment.status} (${ride.payment.method.toLowerCase()})` : ""}
                       </p>
                     </div>
+                    {ride.status === "COMPLETED" && !ride.payment && (
+                      <button
+                        onClick={() => runAction(ride.id, "driverCollectCash")}
+                        className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      >
+                        Collect cash
+                      </button>
+                    )}
                     {next && (
                       <button
                         onClick={() => runAction(ride.id, next.action)}
