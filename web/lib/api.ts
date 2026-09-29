@@ -59,6 +59,8 @@ export const api = {
 
   getRide: (id: string) => request(`/rides/${id}`),
 
+  listRides: () => request("/rides"),
+
   cancelRide: (id: string) => request(`/rides/${id}/cancel`, { method: "POST" }),
 
   claimSeat: (poolId: string, rideRequestId: string, idempotencyKey: string) =>
