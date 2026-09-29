@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, getSession, Session, errorMessage } from "@/lib/api";
 
@@ -106,6 +107,9 @@ export default function PassengerPage() {
             <h1 className="text-xl font-semibold text-zinc-900">Request a ride</h1>
             <p className="text-sm text-zinc-500">Signed in as {session.user.name}</p>
           </div>
+          <Link href="/passenger/history" className="text-sm font-medium text-zinc-700 underline">
+            Ride history
+          </Link>
         </div>
 
         <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
