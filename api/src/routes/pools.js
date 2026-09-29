@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, requireRole } = require("../middleware/auth");
 const { idempotent } = require("../middleware/idempotency");
 const { asyncHandler } = require("../lib/asyncHandler");
 
@@ -10,12 +10,25 @@ const router = express.Router();
 // The endpoint the whole concurrency design (Section 7 of the build plan)
 // is built around: two passengers (e.g. Nusrat and Shirin) racing for the
 // last seat on the same Tesla must never both succeed.
-router.post("/:poolId/claim", requireAuth, idempotent(), asyncHandler(async (req, res) => {
+router.post("/:poolId/claim", requireAuth, requireRole("PASSENGER"), idempotent(), asyncHandler(async (req, res) => {
   const { poolId } = req.params;
   const { rideRequestId } = req.body;
 
   if (!rideRequestId) {
     return res.status(400).json({ error: "rideRequestId is required" });
+  }
+
+  // A passenger may only claim a seat for their own ride request. Without
+  // this check any logged-in user could claim seats for anyone else's ride.
+  const ride = await prisma.rideRequest.findUnique({
+    where: { id: rideRequestId },
+    select: { passengerId: true },
+  });
+  if (!ride) {
+    return res.status(404).json({ error: "Ride request not found" });
+  }
+  if (ride.passengerId !== req.user.id) {
+    return res.status(403).json({ error: "Not your ride request" });
   }
 
   try {
