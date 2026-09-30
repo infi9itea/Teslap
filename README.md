@@ -2,8 +2,7 @@
 
 A ride-pooling MVP for Dhaka: request a ride, get pooled with a compatible
 passenger automatically, pay a fairly split fare, and ride to completion,
-with a driver-side manifest for the vehicle. Built for the RoBenDevs
-internship assessment.
+with a driver-side manifest for the vehicle.
 
 **Demo video:** _link to be added_
 
