@@ -4,7 +4,6 @@
 
 **Live demo:** https://teslap.vercel.app (demo logins are in the walkthrough below; the free-tier API sleeps when idle, so the first request can take about a minute)
 
-**Demo video:** https://youtu.be/SQqAQuO6AC4
 
 A ride-pooling MVP for Dhaka: request a ride, get pooled with a compatible
 passenger automatically, pay a fairly split fare, and ride to completion,
