@@ -1,5 +1,7 @@
 # Dhaka Tesla Pool
 
+![CI](https://github.com/infi9itea/Teslap/actions/workflows/ci.yml/badge.svg)
+
 A ride-pooling MVP for Dhaka: request a ride, get pooled with a compatible
 passenger automatically, pay a fairly split fare, and ride to completion,
 with a driver-side manifest for the vehicle.
@@ -389,8 +391,6 @@ Full reasoning for every decision is in [`docs/DESIGN.md`](docs/DESIGN.md).
 - **Assignment is automatic.** A driver doesn't browse and accept
   requests. Riders are assigned to the first `ONLINE` Tesla's forming pool,
   and the driver works from that manifest. Assumption: one Tesla per driver.
-- **No public deployment.** See [Deployment](#deployment) below for why,
-  and what's provided instead.
 
 ## Next improvements
 
@@ -406,16 +406,7 @@ In priority order, if this continued past the assessment:
 
 ## Deployment
 
-Per the brief's fallback ("if free backend hosting isn't available, document
-the constraint and give a reproducible Docker deployment instead"): no
-public URL is provided. Attempting free-tier hosting for three services
-(Postgres, API, Next.js frontend) with real inter-service networking
-reliably, within the assessment's timeframe, was judged a worse use of
-remaining time than hardening the Docker deployment itself, which is
-documented above and has been verified from a clean state, including three
-real bugs found and fixed in the process (see
-[Verified end-to-end](#verified-end-to-end-not-just-written)). Running
-`docker compose up --build` is the reproducible substitute.
+Live at https://teslap.vercel.app: frontend on Vercel, API on Render, Postgres on Neon, all on free tiers. The API sleeps after 15 minutes idle, so the first request can take about a minute. `docker compose up --build` remains the reproducible local setup.
 
 ## AI usage
 
